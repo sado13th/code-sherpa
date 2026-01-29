@@ -4,7 +4,11 @@ import click
 from rich.console import Console
 
 from code_sherpa import __version__
-from code_sherpa.shared.config import get_config_path, load_config
+from code_sherpa.shared.config import (
+    get_config_for_project,
+    get_config_path,
+    load_config,
+)
 from code_sherpa.shared.output import get_formatter
 
 console = Console()
@@ -17,6 +21,8 @@ class Context:
         self.config = None
         self.format = "console"
         self.verbose = False
+        self.project_name = None
+        self.project_path = None
 
 
 pass_context = click.make_pass_decorator(Context, ensure=True)
@@ -28,6 +34,12 @@ pass_context = click.make_pass_decorator(Context, ensure=True)
     "-c",
     type=click.Path(exists=True),
     help="설정 파일 경로",
+)
+@click.option(
+    "--project",
+    "-p",
+    type=str,
+    help="사용할 프로젝트 이름",
 )
 @click.option(
     "--format",
@@ -44,13 +56,36 @@ pass_context = click.make_pass_decorator(Context, ensure=True)
 )
 @click.version_option(version=__version__, prog_name="code-sherpa")
 @pass_context
-def cli(ctx: Context, config: str | None, format: str, verbose: bool):
+def cli(
+    ctx: Context,
+    config: str | None,
+    project: str | None,
+    format: str,
+    verbose: bool,
+):
     """Code-Sherpa: Git 저장소 분석 및 AI 기반 Multi-Agent 코드 리뷰 도구."""
     from pathlib import Path
 
-    ctx.config = load_config(Path(config) if config else None)
     ctx.format = format
     ctx.verbose = verbose
+    ctx.project_name = project
+
+    if project:
+        # 프로젝트 지정 시 프로젝트 설정 로드
+        try:
+            ctx.config, ctx.project_path = get_config_for_project(project)
+            # 경로 유효성 검사
+            if not ctx.project_path.exists():
+                console.print(
+                    f"[yellow]경고:[/yellow] 프로젝트 경로가 존재하지 않습니다: "
+                    f"{ctx.project_path}"
+                )
+        except ValueError as e:
+            console.print(f"[red]오류:[/red] {e}")
+            raise click.Abort()
+    else:
+        ctx.config = load_config(Path(config) if config else None)
+        ctx.project_path = None
 
 
 # ============================================================
@@ -66,19 +101,21 @@ def analyze(ctx: Context):
 
 
 @analyze.command("repo")
-@click.argument("path", default=".", type=click.Path(exists=True))
+@click.argument("path", default=None, type=click.Path(exists=True), required=False)
 @pass_context
-def analyze_repo(ctx: Context, path: str):
+def analyze_repo(ctx: Context, path: str | None):
     """저장소 전체 요약 분석."""
     from pathlib import Path
 
     from code_sherpa.analyze import RepoSummarizer
 
-    console.print(f"[bold]저장소 분석:[/bold] {path}")
+    # 프로젝트 경로 우선, 없으면 인자, 없으면 현재 디렉토리
+    target_path = ctx.project_path or (Path(path) if path else Path.cwd())
+    console.print(f"[bold]저장소 분석:[/bold] {target_path}")
 
     try:
         summarizer = RepoSummarizer()
-        result = summarizer.summarize_sync(Path(path))
+        result = summarizer.summarize_sync(target_path)
 
         formatter = get_formatter(ctx.format)
         output = formatter.format(result)
@@ -117,20 +154,21 @@ def analyze_file(ctx: Context, file_path: str):
 
 
 @analyze.command("structure")
-@click.argument("path", default=".", type=click.Path(exists=True))
+@click.argument("path", default=None, type=click.Path(exists=True), required=False)
 @pass_context
-def analyze_structure(ctx: Context, path: str):
+def analyze_structure(ctx: Context, path: str | None):
     """코드 구조 분석."""
     from pathlib import Path
 
     from code_sherpa.analyze import StructureAnalyzer
 
-    console.print(f"[bold]구조 분석:[/bold] {path}")
+    target_path = ctx.project_path or (Path(path) if path else Path.cwd())
+    console.print(f"[bold]구조 분석:[/bold] {target_path}")
 
     try:
         analyzer = StructureAnalyzer()
         exclude_patterns = ctx.config.analyze.exclude_patterns if ctx.config else None
-        result = analyzer.analyze(Path(path), exclude_patterns=exclude_patterns)
+        result = analyzer.analyze(target_path, exclude_patterns=exclude_patterns)
 
         # 구조 출력 (트리 형식)
         _print_structure_tree(result.root)
@@ -162,19 +200,20 @@ def _print_structure_tree(node, prefix: str = "", is_last: bool = True):
 
 
 @analyze.command("quality")
-@click.argument("path", default=".", type=click.Path(exists=True))
+@click.argument("path", default=None, type=click.Path(exists=True), required=False)
 @pass_context
-def analyze_quality(ctx: Context, path: str):
+def analyze_quality(ctx: Context, path: str | None):
     """코드 품질 분석."""
     from pathlib import Path
 
     from code_sherpa.analyze import QualityAnalyzer
 
-    console.print(f"[bold]품질 분석:[/bold] {path}")
+    target_path = ctx.project_path or (Path(path) if path else Path.cwd())
+    console.print(f"[bold]품질 분석:[/bold] {target_path}")
 
     try:
         analyzer = QualityAnalyzer()
-        result = analyzer.analyze_sync(Path(path))
+        result = analyzer.analyze_sync(target_path)
 
         formatter = get_formatter(ctx.format)
         output = formatter.format(result)
@@ -225,10 +264,13 @@ def review(
 
     console.print(f"[dim]에이전트: {', '.join(agent_list)}[/dim]")
 
+    # 프로젝트 경로 사용
+    target_path = ctx.project_path or "."
+
     try:
         with console.status("[bold green]리뷰 진행 중..."):
             result = run_review_sync(
-                path=".",
+                path=target_path,
                 staged=staged,
                 commit_range=commit_range,
                 agents=agent_list,
@@ -304,6 +346,114 @@ def config_init(ctx: Context, force: bool):
         console.print(f"[green]설정 파일 생성됨:[/green] {target}")
     else:
         console.print("[red]예제 설정 파일을 찾을 수 없습니다.[/red]")
+
+
+# ============================================================
+# Project 명령어 그룹
+# ============================================================
+
+
+@cli.group()
+@pass_context
+def project(ctx: Context):
+    """프로젝트 관리."""
+    pass
+
+
+@project.command("add")
+@click.argument("name")
+@click.argument("path", type=click.Path(exists=True))
+@pass_context
+def project_add(ctx: Context, name: str, path: str):
+    """프로젝트 등록."""
+    from code_sherpa.shared.config import add_project
+
+    try:
+        add_project(name, path)
+        console.print(f"[green]프로젝트 등록됨:[/green] {name} → {path}")
+    except ValueError as e:
+        console.print(f"[red]오류:[/red] {e}")
+        raise click.Abort()
+
+
+@project.command("remove")
+@click.argument("name")
+@pass_context
+def project_remove(ctx: Context, name: str):
+    """프로젝트 등록 해제."""
+    from code_sherpa.shared.config import remove_project
+
+    try:
+        remove_project(name)
+        console.print(f"[green]프로젝트 삭제됨:[/green] {name}")
+    except ValueError as e:
+        console.print(f"[red]오류:[/red] {e}")
+        raise click.Abort()
+
+
+@project.command("list")
+@pass_context
+def project_list(ctx: Context):
+    """등록된 프로젝트 목록."""
+    from code_sherpa.shared.config import list_projects
+
+    projects = list_projects()
+
+    if not projects:
+        console.print("[dim]등록된 프로젝트가 없습니다.[/dim]")
+        console.print("\n프로젝트 추가: code-sherpa project add <name> <path>")
+        return
+
+    console.print("[bold]등록된 프로젝트:[/bold]\n")
+    for name, path, is_valid in projects:
+        status = "" if is_valid else " [yellow](경로 없음)[/yellow]"
+        console.print(f"  [cyan]{name:20}[/cyan] {path}{status}")
+
+    console.print(f"\n총 {len(projects)}개 프로젝트")
+
+
+@project.command("show")
+@click.argument("name")
+@pass_context
+def project_show(ctx: Context, name: str):
+    """프로젝트 상세 정보."""
+    from pathlib import Path
+
+    from code_sherpa.shared.config import get_project
+
+    proj = get_project(name)
+
+    if not proj:
+        console.print(f"[red]존재하지 않는 프로젝트:[/red] {name}")
+        raise click.Abort()
+
+    path_exists = Path(proj.path).exists()
+    path_status = "" if path_exists else " [yellow](경로 없음)[/yellow]"
+
+    console.print(f"[bold]프로젝트:[/bold] {proj.name}")
+    console.print(f"[bold]경로:[/bold] {proj.path}{path_status}")
+
+    console.print("\n[bold]LLM 설정:[/bold]")
+    if proj.llm:
+        console.print(f"  Provider: {proj.llm.provider}")
+        console.print(f"  Model: {proj.llm.model}")
+    else:
+        console.print("  [dim](기본값 사용)[/dim]")
+
+    console.print("\n[bold]분석 설정:[/bold]")
+    if proj.analyze:
+        patterns = ", ".join(proj.analyze.exclude_patterns)
+        console.print(f"  제외 패턴: {patterns}")
+    else:
+        console.print("  [dim](기본값 사용)[/dim]")
+
+    console.print("\n[bold]리뷰 설정:[/bold]")
+    if proj.review:
+        agents = ", ".join(proj.review.default_agents)
+        console.print(f"  기본 에이전트: {agents}")
+        console.print(f"  병렬 실행: {proj.review.parallel}")
+    else:
+        console.print("  [dim](기본값 사용)[/dim]")
 
 
 if __name__ == "__main__":
