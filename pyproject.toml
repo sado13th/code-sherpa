@@ -1,17 +1,30 @@
 [project]
 name = "code-sherpa"
 version = "0.1.0"
-description = "code-sherpa"
+description = "Git 저장소 분석 및 AI 기반 Multi-Agent 코드 리뷰 CLI 도구"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
-dependencies = []
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "gitpython>=3.1",
+    "pyyaml>=6.0",
+    "openai>=1.0",
+    "anthropic>=0.18",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
     "ruff>=0.4",
 ]
+
+[project.scripts]
+code-sherpa = "code_sherpa.main:cli"
 
 [build-system]
 requires = ["hatchling"]
@@ -22,7 +35,7 @@ packages = ["src/code_sherpa"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]

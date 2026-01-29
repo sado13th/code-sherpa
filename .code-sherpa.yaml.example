@@ -1,0 +1,38 @@
+# Code-Sherpa Configuration File
+# Copy to .code-sherpa.yaml and customize
+
+# LLM Settings
+llm:
+  provider: "openai"              # openai | anthropic
+  model: "gpt-4"                  # Model name
+  api_key_env: "OPENAI_API_KEY"   # Environment variable for API key
+  max_tokens: 4096
+  temperature: 0.3
+
+# Analysis Settings
+analyze:
+  exclude_patterns:
+    - "node_modules"
+    - ".git"
+    - "__pycache__"
+    - "*.pyc"
+    - "vendor"
+    - ".venv"
+    - "venv"
+  max_file_size_kb: 500
+  # languages: ["python", "javascript"]  # null = all languages
+
+# Review Settings
+review:
+  default_agents:
+    - architect
+    - security
+  parallel: true
+  max_diff_lines: 1000
+
+# Output Settings
+output:
+  default_format: "console"       # console | json | markdown
+  color: true
+  save_reports: false
+  reports_dir: "./outputs/reports"
